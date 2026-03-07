@@ -3678,46 +3678,37 @@ async function testConnection() {
   }
 }
 
-// ── REST helpers مباشرة (أسرع وأضمن)
+// ── REST helpers — كل الطلبات تمر هنا
+let _accessToken = '';
+const H = () => ({
+  'apikey': SUPA_KEY,
+  'Authorization': 'Bearer '+(_accessToken || SUPA_KEY)
+});
+
 async function sbSelect(store, recordId=null) {
   let url = SUPA_URL+'/rest/v1/pos_data?select=record_id,data&store=eq.'+encodeURIComponent(store);
   if (recordId) url += '&record_id=eq.'+encodeURIComponent(recordId);
-  const res = await fetch(url, { headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer '+SUPA_KEY } });
+  const res = await fetch(url, { headers: H() });
   if (!res.ok) { const e = await res.text(); throw new Error(e); }
   return res.json();
 }
-
 async function sbUpsert(rows) {
-  const url = SUPA_URL+'/rest/v1/pos_data';
-  const res = await fetch(url, {
+  const res = await fetch(SUPA_URL+'/rest/v1/pos_data', {
     method: 'POST',
-    headers: {
-      'apikey': SUPA_KEY,
-      'Authorization': 'Bearer '+SUPA_KEY,
-      'Content-Type': 'application/json',
-      'Prefer': 'resolution=merge-duplicates,return=minimal'
-    },
-    body: JSON.stringify(Array.isArray(rows) ? rows : [rows])
+    headers: { ...H(), 'Content-Type':'application/json', 'Prefer':'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(Array.isArray(rows)?rows:[rows])
   });
   if (!res.ok) { const e = await res.text(); throw new Error(e); }
 }
-
 async function sbDelete(store, recordId) {
-  const url = SUPA_URL+'/rest/v1/pos_data?store=eq.'+encodeURIComponent(store)+'&record_id=eq.'+encodeURIComponent(recordId);
-  const res = await fetch(url, { method: 'DELETE', headers: { 'apikey': SUPA_KEY, 'Authorization': 'Bearer '+SUPA_KEY } });
-  if (!res.ok && res.status !== 404) { const e = await res.text(); throw new Error(e); }
+  const res = await fetch(SUPA_URL+'/rest/v1/pos_data?store=eq.'+encodeURIComponent(store)+'&record_id=eq.'+encodeURIComponent(recordId), {
+    method: 'DELETE', headers: { ...H(), 'Prefer':'return=minimal' }
+  });
+  if (!res.ok && res.status!==404) { const e = await res.text(); throw new Error(e); }
 }
-
 async function sbDeleteStore(store) {
-async function sbDeleteStore(store) {
-  const url = SUPA_URL+'/rest/v1/pos_data?store=eq.'+encodeURIComponent(store);
-  const res = await fetch(url, {
-    method: 'DELETE',
-    headers: {
-      'apikey': SUPA_KEY,
-      'Authorization': 'Bearer '+SUPA_KEY,
-      'Prefer': 'return=minimal'
-    }
+  const res = await fetch(SUPA_URL+'/rest/v1/pos_data?store=eq.'+encodeURIComponent(store), {
+    method: 'DELETE', headers: { ...H(), 'Prefer':'return=minimal' }
   });
   if (!res.ok) { const e = await res.text(); throw new Error(e); }
   dbg('🗑 cloud deleted: '+store,'#ff9800');
@@ -3883,24 +3874,22 @@ function startListeners() {
     });
 }
 
-// ── المصادقة (حماية من التكرار)
+// ── المصادقة التلقائية عند إعادة التشغيل (session محفوظة)
 let _authHandled = false;
 supa.auth.onAuthStateChange(async (event, session) => {
+  if (_authHandled) return;
   const user = session?.user || null;
-  if (user && _authHandled) return; // منع التكرار
-  currentUser = user;
-  if (currentUser) {
+  if (user && session?.access_token) {
     _authHandled = true;
-    dbg('🔑 logged in: '+currentUser.email,'#4caf50');
-    updateSyncUI(true, currentUser.email);
+    _accessToken = session.access_token;
+    currentUser = { email: user.email };
+    dbg('🔑 auto-login: '+user.email,'#4caf50');
+    updateSyncUI(true, user.email);
     document.getElementById('login-modal').style.display = 'none';
-    const ok = await testConnection();
-    if (!ok) return;
-    await pullAll();   // اسحب أولاً لتحميل أحدث بيانات
-    await pushAll();   // ثم ارفع ما هو محلي جديد
+    await pullAll();
+    await pushAll();
     startListeners();
-  } else {
-    _authHandled = false;
+  } else if (!user) {
     dbg('🔒 logged out','#aaa');
     updateSyncUI(false);
     if (realtimeChannel) { supa.removeChannel(realtimeChannel); realtimeChannel = null; }
@@ -3941,18 +3930,15 @@ console.log('✅ module loaded');
 window._supaSetSession = async (access_token, refresh_token, email) => {
   try {
     _authHandled = true;
+    _accessToken = access_token; // استخدام مباشر في الـ fetch
     currentUser = { email };
     updateSyncUI(true, email);
     document.getElementById('login-modal').style.display = 'none';
-    dbg('🔑 session set: '+email,'#4caf50');
-    // setSession يُشغّل onAuthStateChange — لكن _authHandled=true يمنعه
-    await supa.auth.setSession({ access_token, refresh_token });
-    const ok = await testConnection();
-    if (!ok) return;
+    dbg('🔑 logged in: '+email,'#4caf50');
     await pullAll();
     await pushAll();
     startListeners();
-  } catch(e) { dbg('❌ setSession: '+e.message,'#f44336'); }
+  } catch(e) { dbg('❌ session error: '+e.message,'#f44336'); }
 };
 </script>
 </body>
