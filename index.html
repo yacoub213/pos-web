@@ -3514,12 +3514,13 @@ window.fbLogin = async () => {
     }
     if (!res.ok) { status.style.color='red'; status.textContent = data.error_description||data.msg||'خطأ في الدخول'; return; }
     status.textContent = '✅ تم تسجيل الدخول';
-    // انتظر تحميل الـ module ثم أرسل الـ session
+    document.getElementById('login-modal').style.display = 'none';
     const trySetSession = (tries=0) => {
+      document.getElementById('login-modal').style.display = 'none'; // تأكيد الإغلاق
       if (window._supaSetSession) {
         window._supaSetSession(data.access_token, data.refresh_token, email);
-      } else if (tries < 20) {
-        setTimeout(() => trySetSession(tries+1), 300);
+      } else if (tries < 30) {
+        setTimeout(() => trySetSession(tries+1), 200);
       }
     };
     trySetSession();
@@ -3939,13 +3940,13 @@ console.log('✅ module loaded');
 // استقبال الـ session من fbLogin
 window._supaSetSession = async (access_token, refresh_token, email) => {
   try {
-    await supa.auth.setSession({ access_token, refresh_token });
-    currentUser = { email };
     _authHandled = true;
+    currentUser = { email };
     updateSyncUI(true, email);
     document.getElementById('login-modal').style.display = 'none';
-    document.getElementById('login-status').textContent = '';
     dbg('🔑 session set: '+email,'#4caf50');
+    // setSession يُشغّل onAuthStateChange — لكن _authHandled=true يمنعه
+    await supa.auth.setSession({ access_token, refresh_token });
     const ok = await testConnection();
     if (!ok) return;
     await pullAll();
