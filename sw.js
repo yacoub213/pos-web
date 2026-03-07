@@ -1,7 +1,7 @@
 // ============================================================
 // SERVICE WORKER — نظام المبيعات PWA
 // ============================================================
-const CACHE_NAME = 'pos-v39';
+const CACHE_NAME = 'pos-v40';
 const ASSETS = [
   './index.html',
   './manifest.json',
