@@ -3477,6 +3477,60 @@ async function installPWA() {
   }
 }
 
+// ── تسجيل الدخول مبكراً (قبل تحميل الـ module)
+const _SB_URL = 'https://orowisoyxkgfbnzajenl.supabase.co';
+const _SB_KEY = 'sb_publishable_pe2W_WmMw0Rz8y0g-LsGxg_k6_qiCNX';
+
+window.fbLogin = async () => {
+  const email  = document.getElementById('login-email').value.trim();
+  const pass   = document.getElementById('login-password').value;
+  const status = document.getElementById('login-status');
+  if (!email || !pass) { status.textContent = 'أدخل البريد وكلمة المرور'; return; }
+  status.style.color = 'var(--text-muted)';
+  status.textContent = 'جاري تسجيل الدخول...';
+  try {
+    let res = await fetch(_SB_URL+'/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      headers: { 'apikey': _SB_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pass })
+    });
+    let data = await res.json();
+    // إنشاء حساب جديد إذا لم يوجد
+    if (!res.ok) {
+      status.textContent = 'إنشاء حساب جديد...';
+      const su = await fetch(_SB_URL+'/auth/v1/signup', {
+        method: 'POST',
+        headers: { 'apikey': _SB_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: pass })
+      });
+      const sud = await su.json();
+      if (!su.ok) { status.style.color='red'; status.textContent = sud.msg||sud.error_description||'خطأ'; return; }
+      res = await fetch(_SB_URL+'/auth/v1/token?grant_type=password', {
+        method: 'POST',
+        headers: { 'apikey': _SB_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: pass })
+      });
+      data = await res.json();
+    }
+    if (!res.ok) { status.style.color='red'; status.textContent = data.error_description||data.msg||'خطأ في الدخول'; return; }
+    status.textContent = '✅ تم تسجيل الدخول';
+    // انتظر تحميل الـ module ثم أرسل الـ session
+    const trySetSession = (tries=0) => {
+      if (window._supaSetSession) {
+        window._supaSetSession(data.access_token, data.refresh_token, email);
+      } else if (tries < 20) {
+        setTimeout(() => trySetSession(tries+1), 300);
+      }
+    };
+    trySetSession();
+  } catch(e) {
+    status.style.color='red';
+    status.textContent = 'خطأ: '+e.message;
+  }
+};
+
+window.fbSkipLogin = () => { document.getElementById('login-modal').style.display='none'; };
+
 init();
 </script>
 <script type="module">
@@ -3853,72 +3907,10 @@ supa.auth.onAuthStateChange(async (event, session) => {
 });
 
 // ── تسجيل الدخول
-window.fbLogin = async () => {
-  dbg('🔐 login clicked','#2196f3');
-  const email  = document.getElementById('login-email').value.trim();
-  const pass   = document.getElementById('login-password').value;
-  const status = document.getElementById('login-status');
-  dbg('📧 email: '+email,'#2196f3');
-  if (!email || !pass) { status.textContent = 'أدخل البريد وكلمة المرور'; return; }
-  status.style.color = 'var(--text-muted)';
-  status.textContent = 'جاري تسجيل الدخول...';
-
-  // حاول تسجيل الدخول أولاً
-  try {
-    let res = await fetch(SUPA_URL+'/auth/v1/token?grant_type=password', {
-      method: 'POST',
-      headers: { 'apikey': SUPA_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password: pass })
-    });
-    let data = await res.json();
-
-    // إذا لم يوجد المستخدم — أنشئه تلقائياً
-    if (!res.ok && (data.error_description||'').includes('Invalid login')) {
-      status.textContent = 'إنشاء حساب جديد...';
-      const signUpRes = await fetch(SUPA_URL+'/auth/v1/signup', {
-        method: 'POST',
-        headers: { 'apikey': SUPA_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password: pass })
-      });
-      const signUpData = await signUpRes.json();
-      if (!signUpRes.ok) { status.style.color='var(--red)'; status.textContent = signUpData.msg || signUpData.error_description || 'خطأ في الإنشاء'; return; }
-      // سجّل دخولاً بعد الإنشاء
-      res = await fetch(SUPA_URL+'/auth/v1/token?grant_type=password', {
-        method: 'POST',
-        headers: { 'apikey': SUPA_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password: pass })
-      });
-      data = await res.json();
-    }
-
-    if (!res.ok) { status.style.color='var(--red)'; status.textContent = data.error_description || data.msg || 'خطأ في تسجيل الدخول'; dbg('❌ login: '+(data.error_description||data.msg),'#f44336'); return; }
-
-    // حفظ الـ session يدوياً
-    const session = data;
-    currentUser = { email: session.user?.email || email, id: session.user?.id };
-    // أخبر الـ Supabase client بالـ session
-    await supa.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
-    status.textContent = '';
-    dbg('🔑 logged in: '+currentUser.email,'#4caf50');
-    updateSyncUI(true, currentUser.email);
-    document.getElementById('login-modal').style.display = 'none';
-    const ok = await testConnection();
-    if (!ok) return;
-    await pullAll();
-    await pushAll();
-    startListeners();
-  } catch(e) {
-    status.style.color='var(--red)';
-    status.textContent = 'خطأ في الاتصال: '+e.message;
-    dbg('❌ login error: '+e.message,'#f44336');
-  }
-};
-
-window.fbSkipLogin    = () => { document.getElementById('login-modal').style.display = 'none'; };
-window.fbLogout       = async () => {
-  await fetch(SUPA_URL+'/auth/v1/logout', { method:'POST', headers:{ 'apikey':SUPA_KEY, 'Authorization':'Bearer '+(await supa.auth.getSession())?.data?.session?.access_token||'' } });
+window.fbLogout = async () => {
   await supa.auth.signOut();
   currentUser = null;
+  _authHandled = false;
   updateSyncUI(false);
   if (realtimeChannel) { supa.removeChannel(realtimeChannel); realtimeChannel = null; }
   if (window.showToast) window.showToast('تم تسجيل الخروج','info');
@@ -3942,7 +3934,25 @@ window.fbManualSync = async () => {
 };
 
 dbg('🟢 Supabase ready','#4caf50');
-console.log('✅ window.fbLogin registered:', typeof window.fbLogin);
+console.log('✅ module loaded');
+
+// استقبال الـ session من fbLogin
+window._supaSetSession = async (access_token, refresh_token, email) => {
+  try {
+    await supa.auth.setSession({ access_token, refresh_token });
+    currentUser = { email };
+    _authHandled = true;
+    updateSyncUI(true, email);
+    document.getElementById('login-modal').style.display = 'none';
+    document.getElementById('login-status').textContent = '';
+    dbg('🔑 session set: '+email,'#4caf50');
+    const ok = await testConnection();
+    if (!ok) return;
+    await pullAll();
+    await pushAll();
+    startListeners();
+  } catch(e) { dbg('❌ setSession: '+e.message,'#f44336'); }
+};
 </script>
 </body>
 </html>
